@@ -43,7 +43,13 @@ def ensure_schema(conn):
 
 # Sessions follow the local start date used in Analytics. Use the same match
 # for progress, completion dates and the work log shown on the detail page.
-MATCHED_SESSIONS = """
+GOAL_FILTER = """
+    g.workspace=:workspace AND (:goal_id IS NULL OR g.id=:goal_id)
+    AND (:program_id IS NULL OR g.program_id=:program_id)
+    AND (:function_id IS NULL OR g.function_id=:function_id)
+"""
+
+MATCHED_SESSIONS = f"""
     FROM work_goals g
     JOIN programs p ON p.workspace=g.workspace AND (g.program_id IS NULL OR p.id=g.program_id)
     JOIN sessions s ON s.program_id=p.id
@@ -51,12 +57,13 @@ MATCHED_SESSIONS = """
         AND s.started_at < :tomorrow
         AND (g.ends_on IS NULL OR substr(s.started_at, 1, 10) <= g.ends_on)
         AND (g.function_id IS NULL OR s.function_id=g.function_id)
-    WHERE g.workspace=:workspace AND g.kind='time' AND (:goal_id IS NULL OR g.id=:goal_id)
+    WHERE {GOAL_FILTER} AND g.kind='time'
 """
 
 
-def query_scope(workspace, today, goal_id):
+def query_scope(workspace, today, goal_id, program_id=None, function_id=None):
     return {'workspace': workspace, 'today': today.isoformat(), 'goal_id': goal_id,
+            'program_id': program_id, 'function_id': function_id,
             'tomorrow': (today + timedelta(days=1)).isoformat()}
 
 
@@ -108,7 +115,7 @@ class Progress:
         return max(0, self.target - self.amount)
 
 
-def get_goals(conn, workspace, today, goal_id=None):
+def get_goals(conn, workspace, today, goal_id=None, *, program_id=None, function_id=None):
     records = conn.execute(f"""
         WITH logged AS (
             SELECT g.id AS goal_id, SUM(s.seconds) AS seconds, COUNT(*) AS sessions
@@ -120,7 +127,7 @@ def get_goals(conn, workspace, today, goal_id=None):
                    COUNT(CASE WHEN t.done_on <= :today
                           AND (g.ends_on IS NULL OR t.done_on <= g.ends_on) THEN 1 END) AS on_time
             FROM goal_tasks t JOIN work_goals g ON g.id=t.goal_id
-            WHERE g.workspace=:workspace AND (:goal_id IS NULL OR g.id=:goal_id)
+            WHERE {GOAL_FILTER}
             GROUP BY t.goal_id
         )
         SELECT g.*, p.name AS project_name, f.name AS item_name,
@@ -132,8 +139,8 @@ def get_goals(conn, workspace, today, goal_id=None):
         LEFT JOIN functions f ON f.id=g.function_id
         LEFT JOIN logged l ON l.goal_id=g.id
         LEFT JOIN checks c ON c.goal_id=g.id
-        WHERE g.workspace=:workspace AND (:goal_id IS NULL OR g.id=:goal_id)
-    """, query_scope(workspace, today, goal_id))
+        WHERE {GOAL_FILTER}
+    """, query_scope(workspace, today, goal_id, program_id, function_id))
     return [Progress(dict(record), today) for record in records]
 
 

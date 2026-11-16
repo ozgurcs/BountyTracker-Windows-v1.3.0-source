@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from analytics import bounds
+from date_picker import DateField
 from goals import STATES, get_goals, goal_sessions, goal_tasks, save_goal, set_task_done
 from ui import (ACCENT, ACCENT_SOFT, BG, BORDER, CARD, FG, FONT, GREEN, GREEN_SOFT, MUTED,
                 PANEL, WARN, clip, count_label, display_date, duration, progress_bar,
@@ -97,7 +98,9 @@ class GoalsPage:
         app.heading('Goals', 'Set a target and see what you reached before the deadline.', ('+ New goal', self.edit))
         with closing(self.connect()) as conn:
             goals = get_goals(conn, app.workspace, self.day)
-        state = self.filters.setdefault(app.workspace, {'status': 'All', 'scope': None, 'search': '', 'sort': 'Priority'})
+        state = self.filters.setdefault(app.workspace, {
+            'status': 'All', 'scope': None, 'function': None, 'search': '', 'sort': 'Priority'
+        })
 
         if not goals:
             starter = surface(app.body, ACCENT_SOFT)
@@ -139,6 +142,8 @@ class GoalsPage:
         scope_picker = ttk.Combobox(controls, values=[value for _, value in scope_choices], width=16, state='readonly')
         scope_picker.current(next((index for index, (key, _) in enumerate(scope_choices) if key == state['scope']), 0))
         scope_picker.pack(side='left', padx=(0, 6))
+        item_picker = ttk.Combobox(controls, width=14, state='readonly')
+        item_choices = []
         sort = ttk.Combobox(controls, values=SORTS, width=10, state='readonly')
         sort.set(state['sort'])
         sort.pack(side='right', padx=(6, 0))
@@ -176,7 +181,8 @@ class GoalsPage:
         def refresh(*_):
             nonlocal matching
             selected_scope = scope_choices[scope_picker.current()][0]
-            state.update(scope=selected_scope, search=query.get(), sort=sort.get())
+            selected_item = item_choices[item_picker.current()][0]
+            state.update(scope=selected_scope, function=selected_item, search=query.get(), sort=sort.get())
             search_text = state['search'].strip().casefold()
             for status, (tile, edge) in tiles.items():
                 selected = state['status'] == status
@@ -188,19 +194,32 @@ class GoalsPage:
                 goal = progress.goal
                 searchable = f"{goal['title']} {goal['notes']} {self.scope_name(goal)}".casefold()
                 if (selected_all or progress.state == state['status']) and search_text in searchable and (
-                        selected_scope is None or (goal['program_id'] or 0) == selected_scope):
+                        selected_scope is None or (goal['program_id'] or 0) == selected_scope) and (
+                        selected_item is None or goal['function_id'] == selected_item):
                     filtered.append(progress)
             matching = ordered(filtered, state['sort'])
             arrange(listing.winfo_width(), force=True)
             summary.configure(text=f"{state['status']}  ·  {count_label(len(matching), 'goal')}")
             listing.master.yview_moveto(0)
 
+        def refresh_items(selected=None):
+            pid = scope_choices[scope_picker.current()][0]
+            item_choices[:] = [(None, f'All {app.item_label}s'), *self.item_choices(pid)]
+            item_picker.configure(values=[name for _, name in item_choices])
+            item_picker.current(next((index for index, (key, _) in enumerate(item_choices) if key == selected), 0))
+            if pid and len(item_choices) > 1:
+                item_picker.pack(side='left', after=scope_picker, padx=(0, 6))
+            else:
+                item_picker.pack_forget()
+            refresh()
+
         listing.bind('<Configure>', lambda event: arrange(event.width), add=True)
-        scope_picker.bind('<<ComboboxSelected>>', refresh)
+        scope_picker.bind('<<ComboboxSelected>>', lambda _: refresh_items())
+        item_picker.bind('<<ComboboxSelected>>', refresh)
         sort.bind('<<ComboboxSelected>>', refresh)
         watch = query.trace_add('write', refresh)
         controls.bind('<Destroy>', lambda _: query.trace_remove('write', watch), add=True)
-        refresh()
+        refresh_items(state['function'])
 
     def project_choices(self):
         projects = self.app.program_by_id
@@ -210,6 +229,54 @@ class GoalsPage:
             name = project['name']
             choices.append((pid, name if names[name] == 1 else f'{name} · #{pid}'))
         return choices
+
+    def item_choices(self, program_id):
+        if not program_id:
+            return []
+        order = 'id' if self.app.general else 'name COLLATE NOCASE, id'
+        with closing(self.connect()) as conn:
+            records = conn.execute(f"""
+                SELECT id,name FROM functions WHERE program_id=? AND work_kind='endpoint' ORDER BY {order}
+            """, (program_id,))
+            return [(row['id'], f"{row['name']}  ·  #{row['id']}") for row in records]
+
+    def show_linked(self, program_id, function_id):
+        self.filters[self.app.workspace] = {
+            'status': 'All', 'scope': program_id, 'function': function_id, 'search': '', 'sort': 'Priority'
+        }
+        self.app.show('Goals')
+
+    def linked_goals(self, parent, program_id, function_id=None):
+        app = self.app
+        with closing(self.connect()) as conn:
+            records = get_goals(conn, app.workspace, date.today(), program_id=program_id, function_id=function_id)
+        panel = surface(parent)
+        panel.pack(fill='x', pady=(0, 12))
+        header = app.tools(panel)
+        header.pack_configure(padx=13, pady=(7, 4))
+        app.label(header, 'Linked goals', 12, bold=True).pack(side='left')
+        app.button(header, '+ New goal', lambda: self.edit(scope=(program_id, function_id)),
+                   kind='quiet').pack(side='right')
+        if not records:
+            noun = app.item_label if function_id is not None else app.project_label
+            app.label(panel, f'No goals linked to this {noun}.', 10, MUTED).pack(anchor='w', padx=13, pady=(0, 12))
+            return
+
+        app.label(header, str(len(records)), 9, MUTED).pack(side='left', padx=7)
+        app.button(header, 'All linked goals  →', lambda: self.show_linked(program_id, function_id),
+                   kind='quiet').pack(side='right', padx=(0, 5))
+        for progress in ordered(records, 'Priority')[:3]:
+            goal = progress.goal
+            tk.Frame(panel, bg=BORDER, height=1).pack(fill='x', padx=13)
+            row = app.tools(panel)
+            row.pack_configure(padx=13, pady=(4, 6))
+            self.state_badge(row, progress).pack(side='right', padx=(5, 0))
+            app.label(row, f'{progress_percent(progress.fraction)}%', 10, ACCENT, bold=True).pack(side='right', padx=6)
+            name = app.button(row, clip(goal['title'], 45), lambda key=goal['id']: self.open(key), kind='quiet')
+            name.configure(anchor='w', fg=FG, padx=0, pady=2)
+            name.pack(side='top', fill='x')
+            if function_id is None and goal['item_name']:
+                app.label(row, clip(goal['item_name'], 42), 9, MUTED).pack(anchor='w')
 
     def state_badge(self, parent, progress):
         shade, ink, _, marker = PALETTES[progress.state]
@@ -282,6 +349,9 @@ class GoalsPage:
                     lock_item=goal['function_id'] is not None, goal_window=(progress.starts, progress.ends)
                 )).pack(side='left', padx=(0, 6))
         app.button(actions, 'Repeat goal', lambda: self.edit(goal, repeat=True)).pack(side='left')
+        if goal['program_id'] is not None:
+            noun = app.item_label if goal['function_id'] is not None else app.project_label
+            app.button(actions, f'Open {noun}', lambda: self.open_scope(goal), kind='quiet').pack(side='left', padx=6)
         app.button(actions, 'Delete goal', lambda: self.remove(goal), kind='quiet').pack(side='right')
 
         if reached:
@@ -373,6 +443,11 @@ class GoalsPage:
         if app.focus_selection[app.workspace][0] is None and app.session_start is None:
             app.notify(f'Choose a {app.project_label} to log time toward this goal.')
 
+    def open_scope(self, goal):
+        self.app.activate_program(goal['program_id'])
+        if goal['function_id'] is not None:
+            self.app.open_work_item(goal['function_id'])
+
     def remove(self, goal):
         checklist = ' and its checklist' if goal['kind'] == 'checklist' else ''
         removed = self.app.confirm_delete(
@@ -383,18 +458,18 @@ class GoalsPage:
             self.app.show('Goals')
             self.app.notify('Goal deleted.')
 
-    def edit(self, goal=None, *, repeat=False):
-        return GoalEditor(self, goal, repeat).window
+    def edit(self, goal=None, *, repeat=False, scope=None):
+        return GoalEditor(self, goal, repeat, scope).window
 
 
 class GoalEditor:
-    def __init__(self, page, goal, repeat):
+    def __init__(self, page, goal, repeat, scope):
         self.page = page
         self.app = app = page.app
         self.workspace = app.workspace
         self.goal_id = goal['id'] if goal and not repeat else None
         self.today = date.today()
-        self.projects = [(None, 'Entire workspace'), *page.project_choices()]
+        self.projects = [(None, f'All {app.project_label}s'), *page.project_choices()]
         self.items = []
         goal = goal or {}
         start, end = bounds(self.today, 'Weekly')
@@ -430,19 +505,25 @@ class GoalEditor:
             self.kind.configure(state='disabled')
         self.target_label, self.target = self.entry(
             'Target hours or HH:MM', 2, 1, self.target_text(goal.get('target_seconds')))
-        self.project = self.combo('Scope', 4, 0, [name for _, name in self.projects])
-        pid = goal.get('program_id', app.pid)
+        default_project, default_item = scope or (app.pid, None)
+        self.project = self.combo(app.project_label.title(), 4, 0, [name for _, name in self.projects])
+        pid = goal.get('program_id', default_project)
         self.project.current(next((index for index, (key, _) in enumerate(self.projects) if key == pid), 0))
-        self.item = self.combo(app.item_label.title(), 4, 1, ())
-        self.reload_items(goal.get('function_id', app.fid))
+        self.item = self.combo(f'{app.item_label.title()} (optional)', 4, 1, ())
+        self.reload_items(goal.get('function_id', default_item))
         self.project.bind('<<ComboboxSelected>>', lambda _: self.reload_items())
 
         presets = tk.Frame(content, bg=BG)
         presets.grid(row=6, column=0, columnspan=2, sticky='ew', pady=(9, 0))
         for label, period in (('Today', 'Daily'), ('This week', 'Weekly'), ('This month', 'Monthly')):
             app.button(presets, label, lambda value=period: self.set_dates(value)).pack(side='left', padx=(0, 5))
-        _, self.start = self.entry('Starts on (YYYY-MM-DD)', 7, 0, start.isoformat())
-        _, self.end = self.entry('Deadline (optional)', 7, 1, end.isoformat() if end else '')
+        self.field_label('Starts on', 7, 0)
+        self.start = DateField(app, content, 'Choose start date', start, self.dates_changed)
+        self.start.button.grid(row=8, column=0, sticky='ew', padx=(0, 8))
+        self.field_label('Deadline (optional)', 7, 1)
+        self.end = DateField(app, content, 'Choose deadline', end, self.dates_changed,
+                             earliest=lambda: self.start.value, optional=True)
+        self.end.button.grid(row=8, column=1, sticky='ew', padx=(0, 8))
         self.tasks_label, self.tasks = self.text_field('Tasks · one per line', 9, 4)
         if goal.get('kind') == 'checklist':
             with closing(page.connect()) as conn:
@@ -497,13 +578,8 @@ class GoalEditor:
 
     def reload_items(self, selected=None):
         pid = self.projects[self.project.current()][0]
-        self.items = [(None, 'All items' if pid is not None else 'Choose a project first')]
-        if pid is not None:
-            order = 'id' if self.workspace == 'general' else 'name COLLATE NOCASE, id'
-            with closing(self.page.connect()) as conn:
-                self.items.extend((row['id'], f"{row['name']}  ·  #{row['id']}") for row in conn.execute(f"""
-                    SELECT id,name FROM functions WHERE program_id=? AND work_kind='endpoint' ORDER BY {order}
-                """, (pid,)))
+        empty = f'All {self.app.item_label}s' if pid is not None else f'Choose a {self.app.project_label} first'
+        self.items = [(None, empty), *self.page.item_choices(pid)]
         self.item.configure(values=[name for _, name in self.items], state='readonly' if pid is not None else 'disabled')
         self.item.current(next((index for index, (key, _) in enumerate(self.items) if key == selected), 0))
 
@@ -515,11 +591,14 @@ class GoalEditor:
             widget.grid() if checklist else widget.grid_remove()
 
     def set_dates(self, period):
-        self.error.configure(text='')
         start, stop = bounds(self.today, period)
-        for field, value in ((self.start, start), (self.end, stop - timedelta(days=1))):
-            field.delete(0, 'end')
-            field.insert(0, value.isoformat())
+        self.start.set(start)
+        self.end.set(stop - timedelta(days=1))
+        self.dates_changed()
+
+    def dates_changed(self):
+        invalid = self.end.value is not None and self.end.value < self.start.value
+        self.error.configure(text='Choose a deadline on or after the start date.' if invalid else '')
 
     def save(self):
         title = self.name.get().strip()
@@ -527,12 +606,7 @@ class GoalEditor:
         try:
             if not 1 <= len(title) <= 100:
                 raise ValueError('Enter a goal name of 1 to 100 characters.')
-            try:
-                start = date.fromisoformat(self.start.get().strip())
-                end_text = self.end.get().strip()
-                end = date.fromisoformat(end_text) if end_text else None
-            except ValueError as error:
-                raise ValueError('Enter valid dates in YYYY-MM-DD format.') from error
+            start, end = self.start.value, self.end.value
             if end is not None and end < start:
                 raise ValueError('The deadline must be on or after the start date.')
 

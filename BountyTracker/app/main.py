@@ -470,7 +470,7 @@ class App(tk.Tk):
         bottom.pack(side='bottom', fill='x', padx=17, pady=17)
         tk.Frame(bottom, bg=SIDEBAR_ACTIVE, height=1).pack(fill='x', pady=(0, 11))
         self.label(bottom, '●  Local data', 9, '#a6dec4').pack(side='left')
-        self.label(bottom, 'v1.3.0', 8, SIDEBAR_TEXT).pack(side='right')
+        self.label(bottom, 'v1.3.1', 8, SIDEBAR_TEXT).pack(side='right')
 
         content = tk.Frame(self, bg=BG)
         content.pack(side='left', fill='both', expand=True)
@@ -1013,6 +1013,8 @@ class App(tk.Tk):
         chart.grid(row=0, column=1, padx=(7, 0), sticky='nsew')
         weekly_chart(self, chart, {entry['day']: entry['seconds'] for entry in daily}, today)
 
+        if self.general:
+            self.goals.linked_goals(board, self.pid)
         self.overview_items(board)
         if not self.general:
             links = tk.Frame(board, bg=BG)
@@ -1551,6 +1553,8 @@ class App(tk.Tk):
         if capture is not None:
             self.label(tools, 'Captured ' + capture['captured_at'], 9, MUTED).pack(side='right')
 
+        if kind == 'topic':
+            self.goals.linked_goals(board, self.pid, fid)
         if branch is not None:
             self.path_sections(board, fid, branch, sessions)
         else:

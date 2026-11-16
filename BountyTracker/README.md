@@ -1,4 +1,4 @@
-# BountyTracker 1.3.0
+# BountyTracker 1.3.1
 
 BountyTracker tracks programs and study subjects locally. Open the separate Windows x64 EXE, or extract the source ZIP and run `run-windows.bat` with Python 3.11+ and Tcl/Tk. Use `build-windows.bat` to build the EXE.
 
@@ -55,7 +55,9 @@ Open **Analytics** from either workspace. Switch between **Daily**, **Weekly**, 
 
 ## Goals and outcomes
 
-Open **Goals → + New goal** in either workspace. Choose a **Time target** or **Checklist**, then select the whole workspace, a project, or an individual topic or endpoint. Use **Today**, **This week**, or **This month** to fill the dates, or enter a custom date range. Leave the deadline empty for an open-ended goal.
+Open **Goals → + New goal** in either workspace. Choose a **Time target** or **Checklist**. In General, choose a **Subject** and an optional **Topic**. You can also open a subject or topic and use **Linked goals → + New goal** to preselect it. The **Linked goals** panel shows existing goals, and **Open subject** or **Open topic** on a goal returns to its linked page.
+
+Click **Starts on** or **Deadline** to choose a date from the calendar. Use the arrows to change months, or use **Today**, **This week**, or **This month** in the form to fill both dates. Choose **No deadline** in the deadline calendar for an open-ended goal.
 
 Time goals update from saved sessions with a start date in the goal's date range, including its deadline. Open a goal to see the work log, how much time is left, and the daily pace needed before the deadline. **Start focus** opens the timer with the goal's project or item selected. Use **Log time** on an active project or item goal to enter a session directly. Workspace goals count sessions saved to any project in that workspace.
 
