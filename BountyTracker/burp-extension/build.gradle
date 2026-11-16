@@ -1,0 +1,5 @@
+plugins { id 'java' }
+repositories { mavenCentral() }
+dependencies { compileOnly 'net.portswigger.burp.extensions:montoya-api:2025.12' }
+java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+jar { archiveBaseName = 'BountyTrackerExtension' }
